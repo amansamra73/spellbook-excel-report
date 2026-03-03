@@ -112,7 +112,7 @@ def build_company_monthly_forecast(summary, current_month=3):
             exp = actual_exp[m]
         elif is_partial:
             # Mar partial — use what we have, project rest of month
-            days_elapsed = 3  # Mar 3
+            days_elapsed = datetime.now().day
             days_total   = 31
             partial_nb  = summary['totalNB']  - actual_nb[1] - actual_nb[2]
             partial_exp = summary['totalExp'] - actual_exp[1] - actual_exp[2]
@@ -382,8 +382,11 @@ def build_excel(data):
     for i,h in enumerate(hdrs): HDR(ws4,13,i+1,h)
 
     monthly=build_company_monthly_forecast(summary, current_month)
-    nb_tgt_monthly  = summary['totalNBTarget']  / 12
-    exp_tgt_monthly = summary['totalExpTarget'] / 12
+    sv_total = sum(SEASON.values())
+    nb_tgt_monthly_dict  = {m: summary["totalNBTarget"]  * SEASON[m] / sv_total for m in range(1,13)}
+    exp_tgt_monthly_dict = {m: summary["totalExpTarget"] * SEASON[m] / sv_total for m in range(1,13)}
+    nb_tgt_monthly  = summary["totalNBTarget"]  / 12  # kept for compat
+    exp_tgt_monthly = summary["totalExpTarget"] / 12  # kept for compat
 
     fy_totals = {'nb_base':0,'nb_bull':0,'nb_bear':0,'exp_base':0,'exp_bull':0,'exp_bear':0}
     for m in range(1,13):
@@ -400,11 +403,11 @@ def build_excel(data):
         C(ws4,r,8,d['total'],      '$#,##0',bold=d['is_actual'],bg=bg)
         C(ws4,r,9,d['nb_bull']+d['exp_bull'],'$#,##0',italic=not d['is_actual'],bg='F1FBF1' if not d['is_actual'] else bg)
         C(ws4,r,10,d['nb_bear']+d['exp_bear'],'$#,##0',italic=not d['is_actual'],bg='FEF5F5' if not d['is_actual'] else bg)
-        C(ws4,r,11,round(nb_tgt_monthly), '$#,##0',bg=LG)
-        C(ws4,r,12,round(exp_tgt_monthly),'$#,##0',bg=LG)
-        C(ws4,r,13,round(nb_tgt_monthly+exp_tgt_monthly),'$#,##0',bg=LG)
-        nb_att  = d['nb']  / nb_tgt_monthly  if nb_tgt_monthly  else 0
-        exp_att = d['exp'] / exp_tgt_monthly if exp_tgt_monthly else 0
+        C(ws4,r,11,round(nb_tgt_monthly_dict[m]), '$#,##0',bg=LG)
+        C(ws4,r,12,round(exp_tgt_monthly_dict[m]),'$#,##0',bg=LG)
+        C(ws4,r,13,round(nb_tgt_monthly_dict[m]+exp_tgt_monthly_dict[m]),'$#,##0',bg=LG)
+        nb_att  = d["nb"]  / nb_tgt_monthly_dict[m]  if nb_tgt_monthly_dict[m]  else 0
+        exp_att = d["exp"] / exp_tgt_monthly_dict[m] if exp_tgt_monthly_dict[m] else 0
         ATT(ws4,r,14,nb_att); ATT(ws4,r,15,exp_att)
         ws4.row_dimensions[r].height=17
         for k in ['nb_base','nb_bull','nb_bear','exp_base','exp_bull','exp_bear']:
@@ -481,7 +484,10 @@ def build_excel(data):
                     val = round(actuals_m.get(m,0))
                     cell_bg = 'E8F4FD'
                 elif is_partial:
-                    val = round(actuals_m.get(m,0))
+                    # Project partial month to full month
+                    days_in_month = 31 if m in [1,3,5,7,8,10,12] else (28 if m==2 else 30)
+                    partial_val = actuals_m.get(m,0)
+                    val = round(partial_val * days_in_month / max(datetime.now().day,1))
                     cell_bg = 'FFFDE7'
                 else:
                     ramp_lift = RAMP_COHORT_LIFT if m >= 7 else 0
