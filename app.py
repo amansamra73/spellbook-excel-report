@@ -54,11 +54,13 @@ def GAP(ws,r,h=7): ws.row_dimensions[r].height=h
 
 def build_excel(data):
     summary=data['summary']; podStats=data['podStats']
-    repSummaries=data['repSummaries']; top5Deals=data.get('top5Deals',[])
+    repSummaries=data['repSummaries']
+    top10Deals=data.get('top10Deals',data.get('top5Deals',[]))
+    thisWeekDeals=data.get('thisWeekDeals',[])
     RL=f"Week Ending {datetime.now().strftime('%b %-d, %Y')}"
     wb=openpyxl.Workbook()
 
-    # SHEET 1: EXECUTIVE SUMMARY
+    # ── SHEET 1: EXECUTIVE SUMMARY ────────────────────────────────────────────
     ws=wb.active; ws.title='Executive Summary'
     ws.sheet_view.showGridLines=False; ws.sheet_view.zoomScale=90
     for col,w in zip('ABCD',[32,16,16,14]): ws.column_dimensions[col].width=w
@@ -73,8 +75,7 @@ def build_excel(data):
         ('Expansion Revenue',summary['totalExp'],summary['totalExpTarget'],summary['totalExp']/summary['totalExpTarget'] if summary['totalExpTarget'] else 0),
         ('Total Deals',summary['totalDeals'],None,None)]):
         r=6+i; bg=LG if i%2==0 else WH
-        C(ws,r,1,lbl,bold=True,bg=bg,ha='left')
-        C(ws,r,2,act,'$#,##0' if tgt else '#,##0',bg=bg)
+        C(ws,r,1,lbl,bold=True,bg=bg,ha='left'); C(ws,r,2,act,'$#,##0' if tgt else '#,##0',bg=bg)
         C(ws,r,3,tgt if tgt else '—','$#,##0' if tgt else None,bg=bg)
         if att is not None: ATT(ws,r,4,att)
         else: C(ws,r,4,'—',bg=bg)
@@ -103,70 +104,79 @@ def build_excel(data):
         C(ws,r,4,chg,'+0.0%;-0.0%;-',bold=True,bg=GBG if chg>=0 else RBG,fc=GTX if chg>=0 else RTX)
         ws.row_dimensions[r].height=18
 
-    # SHEET 2: POD PERFORMANCE
+    # ── SHEET 2: POD PERFORMANCE ──────────────────────────────────────────────
     ws2=wb.create_sheet('Pod Performance')
     ws2.sheet_view.showGridLines=False; ws2.sheet_view.zoomScale=90
-    for col,w in zip('ABCDEFGH',[28,16,16,13,10,13,14,14]): ws2.column_dimensions[col].width=w
-    MH(ws2,1,1,8,f'Pod Performance — {RL}',DB,WH,14,34); GAP(ws2,2)
-    SEC(ws2,3,1,8,'  NEW BUSINESS BY POD — YTD 2026')
-    for i,h in enumerate(['Pod','YTD NB Revenue','YTD NB Target','Attainment','Deals','Avg Deal','AE Exp Rev','Exp % of Rev']): HDR(ws2,4,i+1,h)
+    for col,w in zip('ABCDEFGHIJK',[24,14,14,12,14,14,12,14,14,12,10]): ws2.column_dimensions[col].width=w
+    MH(ws2,1,1,11,f'Pod Performance — {RL}',DB,WH,14,34); GAP(ws2,2)
+
+    # NB section
+    SEC(ws2,3,1,11,'  NEW BUSINESS BY POD — YTD 2026')
+    for i,h in enumerate(['Pod','Jan NB','Jan Target','Jan Att%','Feb NB','Feb Target','Feb Att%','Mar NB (partial)','Mar Target','Mar Att%','YTD NB']): HDR(ws2,4,i+1,h)
     for i,pod in enumerate(['Enterprise','Commercial In-House','SMB Law']):
         r=5+i; bg=LG if i%2==0 else WH; ps=podStats[pod]
-        att=ps['newBiz']/ps['nbTarget'] if ps['nbTarget'] else 0
-        tp=ps['newBiz']+ps['expansion']
-        C(ws2,r,1,pod,bold=True,bg=bg,ha='left'); C(ws2,r,2,round(ps['newBiz']),'$#,##0',bg=bg)
-        C(ws2,r,3,ps['nbTarget'],'$#,##0',bg=bg); ATT(ws2,r,4,att)
-        C(ws2,r,5,ps['deals'],'#,##0',bg=bg)
-        C(ws2,r,6,round(ps['newBiz']/ps['deals']) if ps['deals'] else 0,'$#,##0',bg=bg)
-        C(ws2,r,7,round(ps['expansion']),'$#,##0',bg=bg)
-        C(ws2,r,8,ps['expansion']/tp if tp else 0,'0.0%',bg=bg)
+        jt=ps.get('janNBTarget',0); ft=ps.get('febNBTarget',0); mt=ps.get('marNBTarget',0)
+        C(ws2,r,1,pod,bold=True,bg=bg,ha='left')
+        C(ws2,r,2,round(ps.get('janNB',0)),'$#,##0',bg=bg)
+        C(ws2,r,3,jt,'$#,##0',bg=bg)
+        ATT(ws2,r,4,ps.get('janNB',0)/jt if jt else 0)
+        C(ws2,r,5,round(ps.get('febNB',0)),'$#,##0',bg=bg)
+        C(ws2,r,6,ft,'$#,##0',bg=bg)
+        ATT(ws2,r,7,ps.get('febNB',0)/ft if ft else 0)
+        C(ws2,r,8,round(ps.get('marNB',0)),'$#,##0',bg=bg)
+        C(ws2,r,9,mt,'$#,##0',bg=bg)
+        ATT(ws2,r,10,ps.get('marNB',0)/mt if mt else 0)
+        C(ws2,r,11,round(ps['newBiz']),'$#,##0',bold=True,bg=bg)
         ws2.row_dimensions[r].height=18
-    C(ws2,8,1,'TOTAL NEW BUSINESS',bold=True,bg=LB,ha='left')
-    C(ws2,8,2,summary['totalNB'],'$#,##0',bold=True,bg=LB)
-    C(ws2,8,3,summary['totalNBTarget'],'$#,##0',bold=True,bg=LB)
-    ATT(ws2,8,4,summary['totalNB']/summary['totalNBTarget'] if summary['totalNBTarget'] else 0)
-    C(ws2,8,5,summary['totalDeals'],'#,##0',bold=True,bg=LB)
-    for c in [6,7,8]: C(ws2,8,c,'—',bg=LB)
-    ws2.row_dimensions[8].height=20
-    GAP(ws2,9)
-    SEC(ws2,10,1,8,'  EXPANSION BY POD — YTD 2026')
-    for i,h in enumerate(['Pod','YTD Exp Revenue','YTD Exp Target','Attainment','Deals','Avg Deal','AM Rev','AE Rev']): HDR(ws2,11,i+1,h)
-    for i,(pod,amPod) in enumerate([('Enterprise','Enterprise AM'),('SMB Law','SMB AM')]):
-        r=12+i; bg=LG if i%2==0 else WH; ps=podStats[pod]; am=podStats[amPod]
-        totalExp=ps['expansion']+am['expansion']; tgt=ps['expTarget'] or am['expTarget']
-        att=totalExp/tgt if tgt else 0
-        C(ws2,r,1,pod,bold=True,bg=bg,ha='left'); C(ws2,r,2,round(totalExp),'$#,##0',bg=bg)
-        C(ws2,r,3,tgt,'$#,##0',bg=bg); ATT(ws2,r,4,att)
-        C(ws2,r,5,am['deals'],'#,##0',bg=bg)
-        C(ws2,r,6,round(am['expansion']/am['deals']) if am['deals'] else 0,'$#,##0',bg=bg)
-        C(ws2,r,7,round(am['expansion']),'$#,##0',bg=bg); C(ws2,r,8,round(ps['expansion']),'$#,##0',bg=bg)
-        ws2.row_dimensions[r].height=18
-    C(ws2,14,1,'TOTAL EXPANSION',bold=True,bg=LB,ha='left')
-    C(ws2,14,2,summary['totalExp'],'$#,##0',bold=True,bg=LB)
-    C(ws2,14,3,summary['totalExpTarget'],'$#,##0',bold=True,bg=LB)
-    ATT(ws2,14,4,summary['totalExp']/summary['totalExpTarget'] if summary['totalExpTarget'] else 0)
-    for c in [5,6,7,8]: C(ws2,14,c,'—',bg=LB)
-    ws2.row_dimensions[14].height=20
 
-    # SHEET 3: INDIVIDUAL PERFORMANCE
+    # Exp section
+    GAP(ws2,8)
+    SEC(ws2,9,1,11,'  EXPANSION BY POD — YTD 2026')
+    for i,h in enumerate(['Pod','Jan Exp','Jan Target','Jan Att%','Feb Exp','Feb Target','Feb Att%','Mar Exp (partial)','Mar Target','Mar Att%','YTD Exp']): HDR(ws2,10,i+1,h)
+    for i,(pod,amPod) in enumerate([('Enterprise','Enterprise AM'),('SMB Law','SMB AM')]):
+        r=11+i; bg=LG if i%2==0 else WH; ps=podStats[pod]; am=podStats[amPod]
+        totalJanExp=ps.get('janExp',0)+am.get('janExp',0)
+        totalFebExp=ps.get('febExp',0)+am.get('febExp',0)
+        totalMarExp=ps.get('marExp',0)+am.get('marExp',0)
+        totalExp=ps['expansion']+am['expansion']
+        jt=ps.get('janExpTarget',0); ft=ps.get('febExpTarget',0); mt=ps.get('marExpTarget',0)
+        C(ws2,r,1,pod,bold=True,bg=bg,ha='left')
+        C(ws2,r,2,round(totalJanExp),'$#,##0',bg=bg); C(ws2,r,3,jt,'$#,##0',bg=bg)
+        ATT(ws2,r,4,totalJanExp/jt if jt else 0)
+        C(ws2,r,5,round(totalFebExp),'$#,##0',bg=bg); C(ws2,r,6,ft,'$#,##0',bg=bg)
+        ATT(ws2,r,7,totalFebExp/ft if ft else 0)
+        C(ws2,r,8,round(totalMarExp),'$#,##0',bg=bg); C(ws2,r,9,mt,'$#,##0',bg=bg)
+        ATT(ws2,r,10,totalMarExp/mt if mt else 0)
+        C(ws2,r,11,round(totalExp),'$#,##0',bold=True,bg=bg)
+        ws2.row_dimensions[r].height=18
+
+    # ── SHEET 3: INDIVIDUAL PERFORMANCE ──────────────────────────────────────
     ws3=wb.create_sheet('Individual Performance')
-    ws3.sheet_view.showGridLines=False; ws3.sheet_view.zoomScale=80
-    for col,w in zip('ABCDEFGHIJKLM',[22,28,16,14,14,12,9,12,14,14,11,14,14]): ws3.column_dimensions[col].width=w
-    MH(ws3,1,1,13,f'Individual Rep Performance — {RL}',DB,WH,14,34); GAP(ws3,2)
-    for i,h in enumerate(['Rep','Role','Pod','YTD Quota','YTD Revenue','Attainment','Deals','Avg Deal','New Biz Rev','Exp Rev','Exp %','2025 Full Yr','YoY vs 2025']): HDR(ws3,3,i+1,h)
+    ws3.sheet_view.showGridLines=False; ws3.sheet_view.zoomScale=75
+    cols3='ABCDEFGHIJKLMNOPQRSTU'
+    widths3=[20,26,16,12,12,10,8,10,10,10,9,10,10,9,10,10,9,10,10,12,12]
+    for col,w in zip(cols3,widths3): ws3.column_dimensions[col].width=w
+    MH(ws3,1,1,21,f'Individual Rep Performance — {RL}',DB,WH,14,34); GAP(ws3,2)
+    hdrs3=['Rep','Role','Pod','YTD Quota','YTD Revenue','Att%','Deals','Avg Deal',
+           'Jan Quota','Jan Rev','Jan Att%','Feb Quota','Feb Rev','Feb Att%',
+           'Mar Quota','Mar Rev','Mar Att%','New Biz','Expansion','2025 FY','YoY']
+    for i,h in enumerate(hdrs3): HDR(ws3,3,i+1,h)
     ws3.freeze_panes='A4'
+
     row=4
     for pod in PORD:
         reps=sorted([r for r in repSummaries if r['pod']==pod],key=lambda x:x['ytdRevenue'],reverse=True)
         if not reps: continue
-        ws3.merge_cells(start_row=row,start_column=1,end_row=row,end_column=13)
+        ws3.merge_cells(start_row=row,start_column=1,end_row=row,end_column=21)
         hc=ws3.cell(row=row,column=1,value=f'  {pod.upper()}')
         hc.font=fnt(True,False,WH,10); hc.fill=fill(PHDR.get(pod,MB)); hc.alignment=aln('left')
         ws3.row_dimensions[row].height=18; row+=1
         bg=PROW.get(pod,WH); pR=pQ=pN=pE=pD=0
         for rep in reps:
             att=rep['ytdRevenue']/rep['ytdQuota'] if rep['ytdQuota'] else None
-            ep=rep['ytdExpansion']/rep['ytdRevenue'] if rep['ytdRevenue'] else 0
+            janA=rep['janRevenue']/rep['janQuota'] if rep.get('janQuota') else None
+            febA=rep['febRevenue']/rep['febQuota'] if rep.get('febQuota') else None
+            marA=rep['marRevenue']/rep['marQuota'] if rep.get('marQuota') else None
             est25=rep['fy2025Revenue']*2/12 if rep.get('fy2025Revenue') else None
             yoy=(rep['ytdRevenue']-est25)/est25 if est25 else None
             C(ws3,row,1,rep['rep'],bold=True,bg=bg,ha='left',sz=9)
@@ -178,38 +188,66 @@ def build_excel(data):
             else: C(ws3,row,6,'—',bg=bg)
             C(ws3,row,7,rep['ytdDeals'],'#,##0',bg=bg)
             C(ws3,row,8,rep['avgDeal'],'$#,##0',bg=bg)
-            C(ws3,row,9,rep['ytdNewBiz'],'$#,##0',bg=bg)
-            C(ws3,row,10,rep['ytdExpansion'],'$#,##0',bg=bg)
-            C(ws3,row,11,ep,'0.0%',bg=bg)
-            C(ws3,row,12,rep['fy2025Revenue'] if rep.get('fy2025Revenue') else '—','$#,##0' if rep.get('fy2025Revenue') else None,bg=bg)
-            if yoy is not None: C(ws3,row,13,yoy,'+0.0%;-0.0%;-',bold=True,bg=GBG if yoy>=0 else RBG,fc=GTX if yoy>=0 else RTX)
-            else: C(ws3,row,13,'N/A',bg=bg)
+            C(ws3,row,9,rep.get('janQuota',0),'$#,##0',bg=bg)
+            C(ws3,row,10,rep.get('janRevenue',0),'$#,##0',bg=bg)
+            if janA is not None: ATT(ws3,row,11,janA)
+            else: C(ws3,row,11,'—',bg=bg)
+            C(ws3,row,12,rep.get('febQuota',0),'$#,##0',bg=bg)
+            C(ws3,row,13,rep.get('febRevenue',0),'$#,##0',bg=bg)
+            if febA is not None: ATT(ws3,row,14,febA)
+            else: C(ws3,row,14,'—',bg=bg)
+            C(ws3,row,15,rep.get('marQuota',0),'$#,##0',bg=bg)
+            C(ws3,row,16,rep.get('marRevenue',0),'$#,##0',bg=bg)
+            if marA is not None: ATT(ws3,row,17,marA)
+            else: C(ws3,row,17,'—',bg=bg)
+            C(ws3,row,18,rep['ytdNewBiz'],'$#,##0',bg=bg)
+            C(ws3,row,19,rep['ytdExpansion'],'$#,##0',bg=bg)
+            C(ws3,row,20,rep['fy2025Revenue'] if rep.get('fy2025Revenue') else '—','$#,##0' if rep.get('fy2025Revenue') else None,bg=bg)
+            if yoy is not None: C(ws3,row,21,yoy,'+0.0%;-0.0%;-',bold=True,bg=GBG if yoy>=0 else RBG,fc=GTX if yoy>=0 else RTX)
+            else: C(ws3,row,21,'N/A',bg=bg)
             pR+=rep['ytdRevenue']; pQ+=rep['ytdQuota']; pN+=rep['ytdNewBiz']; pE+=rep['ytdExpansion']; pD+=rep['ytdDeals']
             ws3.row_dimensions[row].height=17; row+=1
         C(ws3,row,1,f'{pod} SUBTOTAL',bold=True,bg=LB,ha='left')
         for ci in [2,3]: C(ws3,row,ci,'',bg=LB)
         C(ws3,row,4,pQ,'$#,##0',bold=True,bg=LB); C(ws3,row,5,pR,'$#,##0',bold=True,bg=LB)
         ATT(ws3,row,6,pR/pQ if pQ else 0)
-        C(ws3,row,7,pD,'#,##0',bold=True,bg=LB); C(ws3,row,8,'',bg=LB)
-        C(ws3,row,9,pN,'$#,##0',bold=True,bg=LB); C(ws3,row,10,pE,'$#,##0',bold=True,bg=LB)
-        C(ws3,row,11,pE/pR if pR else 0,'0.0%',bold=True,bg=LB)
-        for ci in [12,13]: C(ws3,row,ci,'',bg=LB)
+        C(ws3,row,7,pD,'#,##0',bold=True,bg=LB)
+        for ci in range(8,22): C(ws3,row,ci,'',bg=LB)
         ws3.row_dimensions[row].height=20; row+=2
 
-    # SHEET 4: TOP DEALS
-    ws4=wb.create_sheet('Top Deals')
+    # ── SHEET 4: TOP 10 DEALS YTD ─────────────────────────────────────────────
+    ws4=wb.create_sheet('Top 10 Deals YTD')
     ws4.sheet_view.showGridLines=False
     for col,w in zip('ABCDE',[50,22,20,16,20]): ws4.column_dimensions[col].width=w
-    MH(ws4,1,1,5,f'Top Deals — {RL}',DB,WH,14,34); GAP(ws4,2)
+    MH(ws4,1,1,5,f'Top 10 Deals YTD — {RL}',DB,WH,14,34); GAP(ws4,2)
     for i,h in enumerate(['Deal Name','Owner','Pipeline','Amount','Revenue Start Date']): HDR(ws4,3,i+1,h)
-    for i,deal in enumerate(top5Deals):
+    for i,deal in enumerate(top10Deals):
         r=4+i; bg=LG if i%2==0 else WH
         C(ws4,r,1,deal['dealname'],bg=bg,ha='left')
-        C(ws4,r,2,deal['owner'],bg=bg)
-        C(ws4,r,3,deal['pipeline'],bg=bg)
+        C(ws4,r,2,deal['owner'],bg=bg); C(ws4,r,3,deal['pipeline'],bg=bg)
         C(ws4,r,4,deal['amount'],'$#,##0',bold=True,bg=bg)
         C(ws4,r,5,deal['revenue_start_date'],bg=bg)
         ws4.row_dimensions[r].height=18
+
+    # ── SHEET 5: THIS WEEK'S DEALS ────────────────────────────────────────────
+    ws5=wb.create_sheet("This Week's Deals")
+    ws5.sheet_view.showGridLines=False
+    for col,w in zip('ABCDE',[50,22,20,16,20]): ws5.column_dimensions[col].width=w
+    MH(ws5,1,1,5,f"This Week's Deals — {RL}",DB,WH,14,34); GAP(ws5,2)
+    for i,h in enumerate(['Deal Name','Owner','Pipeline','Amount','Revenue Start Date']): HDR(ws5,3,i+1,h)
+    if thisWeekDeals:
+        for i,deal in enumerate(thisWeekDeals):
+            r=4+i; bg=LG if i%2==0 else WH
+            C(ws5,r,1,deal['dealname'],bg=bg,ha='left')
+            C(ws5,r,2,deal['owner'],bg=bg); C(ws5,r,3,deal['pipeline'],bg=bg)
+            C(ws5,r,4,deal['amount'],'$#,##0',bold=True,bg=bg)
+            C(ws5,r,5,deal['revenue_start_date'],bg=bg)
+            ws5.row_dimensions[r].height=18
+    else:
+        ws5.merge_cells('A4:E4')
+        c=ws5.cell(row=4,column=1,value='No deals with revenue start date in the last 7 days.')
+        c.font=fnt(False,True,'888888',10); c.alignment=aln('left')
+        ws5.row_dimensions[4].height=20
 
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf
