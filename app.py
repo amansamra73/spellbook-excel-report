@@ -73,63 +73,61 @@ def GAP(ws,r,h=7): ws.row_dimensions[r].height=h
 def build_company_monthly_forecast(summary, pod_stats, current_month=3):
     """
     Build month-by-month forecast for full year.
-    Actuals: Jan, Feb, (partial Mar)
-    Forecast: remaining months using seasonality + growth assumptions
+    Jan/Feb: real actuals from podStats.
+    Current month: actuals to date only (no projection from 3 days - too noisy).
+    Future months: seasonality + growth assumptions applied to 2025 base.
     """
-    # 2025 monthly actuals (estimated from full year / seasonality weights)
     fy25_nb  = summary['pace2025NB']  * 6
     fy25_exp = summary['pace2025Exp'] * 6
     sv = sum(SEASON.values())
 
-    # Derive implied 2025 monthly base
     fy25_monthly_nb  = {m: fy25_nb  * SEASON[m] / sv for m in range(1,13)}
     fy25_monthly_exp = {m: fy25_exp * SEASON[m] / sv for m in range(1,13)}
 
-    # Use real monthly actuals from podStats
-    all_pods_nb  = ['Enterprise', 'Commercial In-House', 'SMB Law']
-    all_pods_exp = [('Enterprise','Enterprise AM'), ('SMB Law','SMB AM')]
+    # Real actuals direct from podStats - no estimation
+    nb_pods  = ['Enterprise', 'Commercial In-House', 'SMB Law']
+    exp_pods = [('Enterprise','Enterprise AM'), ('SMB Law','SMB AM')]
 
     actual_nb = {
-        1: round(sum(pod_stats.get(p,{}).get('janNB',0) for p in all_pods_nb)),
-        2: round(sum(pod_stats.get(p,{}).get('febNB',0) for p in all_pods_nb)),
-        3: round(sum(pod_stats.get(p,{}).get('marNB',0) for p in all_pods_nb))
+        1: round(sum(pod_stats.get(p,{}).get('janNB',0) for p in nb_pods)),
+        2: round(sum(pod_stats.get(p,{}).get('febNB',0) for p in nb_pods)),
+        3: round(sum(pod_stats.get(p,{}).get('marNB',0) for p in nb_pods)),
     }
     actual_exp = {
-        1: round(sum(pod_stats.get(p,{}).get('janExp',0)+pod_stats.get(a,{}).get('janExp',0) for p,a in all_pods_exp)),
-        2: round(sum(pod_stats.get(p,{}).get('febExp',0)+pod_stats.get(a,{}).get('febExp',0) for p,a in all_pods_exp)),
-        3: round(sum(pod_stats.get(p,{}).get('marExp',0)+pod_stats.get(a,{}).get('marExp',0) for p,a in all_pods_exp))
+        1: round(sum(pod_stats.get(p,{}).get('janExp',0) + pod_stats.get(a,{}).get('janExp',0) for p,a in exp_pods)),
+        2: round(sum(pod_stats.get(p,{}).get('febExp',0) + pod_stats.get(a,{}).get('febExp',0) for p,a in exp_pods)),
+        3: round(sum(pod_stats.get(p,{}).get('marExp',0) + pod_stats.get(a,{}).get('marExp',0) for p,a in exp_pods)),
     }
 
     months = {}
     for m in range(1,13):
-        is_actual = m <= 2
+        is_actual  = m < current_month
         is_partial = m == current_month
 
         if is_actual:
+            # Completed month - use real actuals
             nb  = actual_nb[m]
             exp = actual_exp[m]
         elif is_partial:
-            # Mar partial — use what we have, project rest of month
-            days_elapsed = datetime.now().day
-            days_total   = 31
-            partial_nb  = summary['totalNB']  - actual_nb[1] - actual_nb[2]
-            partial_exp = summary['totalExp'] - actual_exp[1] - actual_exp[2]
-            nb  = round(partial_nb  * days_total / max(days_elapsed,1))
-            exp = round(partial_exp * days_total / max(days_elapsed,1))
+            # Current month - show actuals to date, no projection (too few days)
+            nb  = actual_nb[m]
+            exp = actual_exp[m]
         else:
-            # Pure forecast
+            # Future month - forecast from 2025 base with growth + ramp cohort lift
             ramp_lift = RAMP_COHORT_LIFT if m >= 7 else 0
             nb  = round(fy25_monthly_nb[m]  * (1 + NB_GROWTH_RATE  + ramp_lift))
             exp = round(fy25_monthly_exp[m] * (1 + EXP_GROWTH_RATE + ramp_lift))
 
         months[m] = {
-            'nb': nb, 'exp': exp, 'total': nb+exp,
+            'nb':       nb,
+            'exp':      exp,
+            'total':    nb + exp,
             'nb_bull':  round(nb  * BULL_MULT) if not is_actual else nb,
             'exp_bull': round(exp * BULL_MULT) if not is_actual else exp,
             'nb_bear':  round(nb  * BEAR_MULT) if not is_actual else nb,
             'exp_bear': round(exp * BEAR_MULT) if not is_actual else exp,
-            'is_actual': is_actual,
-            'is_partial': is_partial
+            'is_actual':  is_actual,
+            'is_partial': is_partial,
         }
     return months
 
@@ -390,7 +388,7 @@ def build_excel(data):
     for m in range(1,13):
         r=14+m-1; d=monthly[m]
         bg = 'E8F4FD' if d['is_actual'] else ('FFFDE7' if d['is_partial'] else WH)
-        label = MONTH_NAMES[m] + (' ✓' if d['is_actual'] else (' ~' if d['is_partial'] else ' →'))
+        label = MONTH_NAMES[m] + (' ✓' if d['is_actual'] else (' (partial)' if d['is_partial'] else ' →'))
         C(ws4,r,1,label,bold=d['is_actual'],bg=bg,ha='left')
         C(ws4,r,2,d['nb'],         '$#,##0',bold=d['is_actual'],bg=bg)
         C(ws4,r,3,d['nb_bull'],    '$#,##0',italic=not d['is_actual'],bg='F1FBF1' if not d['is_actual'] else bg)
@@ -479,16 +477,15 @@ def build_excel(data):
                 is_actual = m <= 2
                 is_partial = m == current_month
                 if is_actual:
-                    val = round(actuals_m.get(m,0))
+                    # Completed month - real actuals
+                    val = round(actuals_m.get(m, 0))
                     cell_bg = 'E8F4FD'
                 elif is_partial:
-                    # Project partial month to full month
-                    import calendar
-                    days_in_month = calendar.monthrange(datetime.now().year, m)[1]
-                    partial_val = actuals_m.get(m, 0)
-                    val = round(partial_val * days_in_month / max(datetime.now().day, 1))
-                    cell_bg = 'FFFDE7'
+                    # Current month - actuals to date only, no noisy projection
+                    val = round(actuals_m.get(m, 0))
+                    cell_bg = 'FFF9C4'
                 else:
+                    # Future month - forecast
                     ramp_lift = RAMP_COHORT_LIFT if m >= 7 else 0
                     val = round(fy25_rev * SEASON[m] / sv * (1 + growth + ramp_lift))
                     cell_bg = 'FFFDE7'
