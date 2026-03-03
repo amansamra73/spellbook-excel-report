@@ -19,7 +19,7 @@ MONTH_NAMES = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9
 
 # Growth assumptions
 NB_GROWTH_RATE   = 0.22   # 22% YoY NB growth (strong pace, recovering from Q1 slow start)
-EXP_GROWTH_RATE  = 0.35   # 35% YoY expansion growth (expansion outpacing NB, healthy customer base)
+EXP_GROWTH_RATE  = 0.20   # 20% YoY expansion growth -- healthy but grounded in historical patterns
 RAMP_COHORT_LIFT = 0.08   # 8% incremental H2 lift from new M1 reps reaching productivity in Q3/Q4
 BULL_MULT        = 1.15
 BEAR_MULT        = 0.88
@@ -82,7 +82,11 @@ def build_company_monthly_forecast(summary, pod_stats, current_month=3):
     sv = sum(SEASON.values())
 
     fy25_monthly_nb  = {m: fy25_nb  * SEASON[m] / sv for m in range(1,13)}
-    fy25_monthly_exp = {m: fy25_exp * SEASON[m] / sv for m in range(1,13)}
+    # Blend 2025 base+growth (60%) with YTD-annualised pace (40%) for expansion
+    # Prevents over-indexing on a hot Q1 while respecting the strong start
+    ytd_exp_annualised = summary.get('totalExp', 0) * 6
+    blended_exp_base   = fy25_exp * (1 + EXP_GROWTH_RATE) * 0.60 + ytd_exp_annualised * 0.40
+    fy25_monthly_exp = {m: blended_exp_base * SEASON[m] / sv for m in range(1,13)}
 
     # Real actuals direct from podStats - no estimation
     nb_pods  = ['Enterprise', 'Commercial In-House', 'SMB Law']
@@ -461,7 +465,9 @@ def build_excel(data):
                 fy_tgt  = ps.get('expTarget',0) or am.get('expTarget',0)
                 pod_label = pod
                 growth = EXP_GROWTH_RATE
-                fy25_rev = summary['pace2025Exp'] * 6 * (0.5 if pod=='Enterprise' else 0.5)
+                # Blend 2025 base (60%) with YTD annualised (40%) per pod
+                fy25_pod_base = summary['pace2025Exp'] * 6 * (0.5 if pod=='Enterprise' else 0.5)
+                fy25_rev = fy25_pod_base * (1 + EXP_GROWTH_RATE) * 0.60 + ytd_rev * 6 * 0.40
             else:
                 pod_label = pod_item
                 ps = podStats[pod_item]
@@ -469,7 +475,10 @@ def build_excel(data):
                 ytd_rev = ps['newBiz']
                 fy_tgt  = ps.get('nbTarget',0)
                 growth = NB_GROWTH_RATE
-                fy25_rev = summary['pace2025NB'] * 6 * (0.40 if pod_item=='Enterprise' else (0.35 if pod_item=='Commercial In-House' else 0.25))
+                # Blend 2025 base (60%) with YTD annualised (40%) per pod
+                nb_pod_splits = {'Enterprise': 0.38, 'Commercial In-House': 0.35, 'SMB Law': 0.27}
+                fy25_pod_base = summary['pace2025NB'] * 6 * nb_pod_splits.get(pod_item, 0.33)
+                fy25_rev = fy25_pod_base * (1 + NB_GROWTH_RATE) * 0.60 + ytd_rev * 6 * 0.40
 
             C(ws5,r,1,pod_label,bold=True,bg=bg,ha='left')
             fy_proj = 0
