@@ -70,7 +70,7 @@ def FCAST(ws,r,c,v,is_actual=False):
 def GAP(ws,r,h=7): ws.row_dimensions[r].height=h
 
 # ── Forecast engine ───────────────────────────────────────────────────────────
-def build_company_monthly_forecast(summary, current_month=3):
+def build_company_monthly_forecast(summary, pod_stats, current_month=3):
     """
     Build month-by-month forecast for full year.
     Actuals: Jan, Feb, (partial Mar)
@@ -85,22 +85,20 @@ def build_company_monthly_forecast(summary, current_month=3):
     fy25_monthly_nb  = {m: fy25_nb  * SEASON[m] / sv for m in range(1,13)}
     fy25_monthly_exp = {m: fy25_exp * SEASON[m] / sv for m in range(1,13)}
 
-    # Actuals we have
-    actuals_nb  = {1: summary['pace2025NB']  * summary['totalNB']  / max(summary['pace2025NB'],1),
-                   2: None, 3: None}
-    actuals_exp = {1: None, 2: None, 3: None}
+    # Use real monthly actuals from podStats
+    all_pods_nb  = ['Enterprise', 'Commercial In-House', 'SMB Law']
+    all_pods_exp = [('Enterprise','Enterprise AM'), ('SMB Law','SMB AM')]
 
-    # Better: use Jan/Feb split. We know YTD but not month split from summary alone.
-    # Use podStats-derived totals passed in separately if available, else distribute YTD by season weight
-    jan_weight = SEASON[1] / (SEASON[1] + SEASON[2])
-    feb_weight = SEASON[2] / (SEASON[1] + SEASON[2])
-
-    actual_nb  = {1: round(summary['totalNB']  * jan_weight * 0.95),
-                  2: round(summary['totalNB']  * feb_weight * 1.05),
-                  3: None}
-    actual_exp = {1: round(summary['totalExp'] * jan_weight * 0.90),
-                  2: round(summary['totalExp'] * feb_weight * 1.10),
-                  3: None}
+    actual_nb = {
+        1: round(sum(pod_stats.get(p,{}).get('janNB',0) for p in all_pods_nb)),
+        2: round(sum(pod_stats.get(p,{}).get('febNB',0) for p in all_pods_nb)),
+        3: round(sum(pod_stats.get(p,{}).get('marNB',0) for p in all_pods_nb))
+    }
+    actual_exp = {
+        1: round(sum(pod_stats.get(p,{}).get('janExp',0)+pod_stats.get(a,{}).get('janExp',0) for p,a in all_pods_exp)),
+        2: round(sum(pod_stats.get(p,{}).get('febExp',0)+pod_stats.get(a,{}).get('febExp',0) for p,a in all_pods_exp)),
+        3: round(sum(pod_stats.get(p,{}).get('marExp',0)+pod_stats.get(a,{}).get('marExp',0) for p,a in all_pods_exp))
+    }
 
     months = {}
     for m in range(1,13):
@@ -215,7 +213,7 @@ def build_excel(data):
     GAP(ws,16)
     SEC(ws,17,1,4,'  2026 FULL YEAR FORECAST SNAPSHOT  (see Forecast sheets for detail)')
     for i,h in enumerate(['Scenario','Total Revenue','New Business','Expansion']): HDR(ws,18,i+1,h)
-    monthly = build_company_monthly_forecast(summary, current_month)
+    monthly = build_company_monthly_forecast(summary, podStats, current_month)
     fy_base_nb  = sum(monthly[m]['nb']  for m in range(1,13))
     fy_base_exp = sum(monthly[m]['exp'] for m in range(1,13))
     fy_bull_nb  = sum(monthly[m]['nb_bull']  for m in range(1,13))
@@ -381,7 +379,7 @@ def build_excel(data):
     hdrs=['Month','NB Base','NB Bull','NB Bear','Exp Base','Exp Bull','Exp Bear','Total Base','Total Bull','Total Bear','NB Target','Exp Target','Total Target','NB Att%','Exp Att%']
     for i,h in enumerate(hdrs): HDR(ws4,13,i+1,h)
 
-    monthly=build_company_monthly_forecast(summary, current_month)
+    monthly=build_company_monthly_forecast(summary, podStats, current_month)
     sv_total = sum(SEASON.values())
     nb_tgt_monthly_dict  = {m: summary["totalNBTarget"]  * SEASON[m] / sv_total for m in range(1,13)}
     exp_tgt_monthly_dict = {m: summary["totalExpTarget"] * SEASON[m] / sv_total for m in range(1,13)}
@@ -485,9 +483,10 @@ def build_excel(data):
                     cell_bg = 'E8F4FD'
                 elif is_partial:
                     # Project partial month to full month
-                    days_in_month = 31 if m in [1,3,5,7,8,10,12] else (28 if m==2 else 30)
-                    partial_val = actuals_m.get(m,0)
-                    val = round(partial_val * days_in_month / max(datetime.now().day,1))
+                    import calendar
+                    days_in_month = calendar.monthrange(datetime.now().year, m)[1]
+                    partial_val = actuals_m.get(m, 0)
+                    val = round(partial_val * days_in_month / max(datetime.now().day, 1))
                     cell_bg = 'FFFDE7'
                 else:
                     ramp_lift = RAMP_COHORT_LIFT if m >= 7 else 0
