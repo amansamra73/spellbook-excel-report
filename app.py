@@ -113,9 +113,16 @@ def build_company_monthly_forecast(summary, pod_stats, current_month=3):
             nb  = actual_nb[m]
             exp = actual_exp[m]
         elif is_partial:
-            # Current month - show actuals to date, no projection (too few days)
-            nb  = actual_nb[m]
-            exp = actual_exp[m]
+            # Current month - blend run-rate projection (40%) with seasonal model (60%)
+            # Q-end months especially should not be anchored to first few days
+            days_elapsed = datetime.now().day
+            days_in_month = 31 if m in [1,3,5,7,8,10,12] else (28 if m==2 else 30)
+            runrate_nb  = round(actual_nb[m]  * days_in_month / max(days_elapsed, 1))
+            runrate_exp = round(actual_exp[m] * days_in_month / max(days_elapsed, 1))
+            seasonal_nb  = round(fy25_monthly_nb[m]  * (1 + NB_GROWTH_RATE))
+            seasonal_exp = round(fy25_monthly_exp[m] * (1 + EXP_GROWTH_RATE))
+            nb  = round(runrate_nb  * 0.40 + seasonal_nb  * 0.60)
+            exp = round(runrate_exp * 0.40 + seasonal_exp * 0.60)
         else:
             # Future month - forecast from 2025 base with growth + ramp cohort lift
             ramp_lift = RAMP_COHORT_LIFT if m >= 7 else 0
@@ -490,8 +497,13 @@ def build_excel(data):
                     val = round(actuals_m.get(m, 0))
                     cell_bg = 'E8F4FD'
                 elif is_partial:
-                    # Current month - actuals to date only, no noisy projection
-                    val = round(actuals_m.get(m, 0))
+                    # Blend run-rate (40%) with seasonal model (60%) -- Q-end months especially
+                    days_elapsed = datetime.now().day
+                    days_in_month = 31 if m in [1,3,5,7,8,10,12] else (28 if m==2 else 30)
+                    partial_val = actuals_m.get(m, 0)
+                    runrate_val  = round(partial_val * days_in_month / max(days_elapsed, 1))
+                    seasonal_val = round(fy25_rev * SEASON[m] / sv * (1 + growth))
+                    val = round(runrate_val * 0.40 + seasonal_val * 0.60)
                     cell_bg = 'FFF9C4'
                 else:
                     # Future month - forecast
