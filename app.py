@@ -148,6 +148,10 @@ def build_company_monthly_forecast(summary, pod_stats, current_month=3):
 
 def build_rep_forecast(rep, current_month=3):
     """Project each rep's full year based on run rate + ramp stage."""
+    is_on_leave  = rep.get('isOnLeave',   False)
+    has_departed = rep.get('hasDeparted', False)
+    inactive     = is_on_leave or has_departed
+
     months_with_data = 2  # Jan + Feb complete
     if rep['ytdRevenue'] == 0:
         monthly_run_rate = 0
@@ -165,6 +169,9 @@ def build_rep_forecast(rep, current_month=3):
             rev = rep['janRevenue'] if m==1 else rep['febRevenue']
         elif is_partial:
             rev = rep['marRevenue']
+        elif inactive:
+            # Departed or on leave — no future revenue expected
+            rev = 0
         else:
             season_mult = SEASON[m] / avg_season
             ramp_adj = 1.0
@@ -318,6 +325,8 @@ def build_excel(data):
         ws3.row_dimensions[row].height=18; row+=1
         bg=PROW.get(pod,WH); pR=pQ=pN=pE=pD=0
         for rep in reps:
+            on_leave   = rep.get('isOnLeave',   False)
+            departed   = rep.get('hasDeparted', False)
             att=rep['ytdRevenue']/rep['ytdQuota'] if rep['ytdQuota'] else None
             janA=rep['janRevenue']/rep['janQuota'] if rep.get('janQuota') else None
             febA=rep['febRevenue']/rep['febQuota'] if rep.get('febQuota') else None
@@ -327,7 +336,7 @@ def build_excel(data):
             C(ws3,row,1,rep['rep'],bold=True,bg=bg,ha='left',sz=9)
             C(ws3,row,2,rep['role'],bg=bg,ha='left',sz=8)
             C(ws3,row,3,pod,bg=bg,ha='left',sz=9)
-            C(ws3,row,4,rep['ytdQuota'],'$#,##0',bg=bg)
+            C(ws3,row,4, 'On Leave' if on_leave else ('Departed' if departed else rep['ytdQuota']), '$#,##0' if not (on_leave or departed) else None, bg=bg)
             C(ws3,row,5,rep['ytdRevenue'],'$#,##0',bg=bg)
             if att is not None: ATT(ws3,row,6,att)
             else: C(ws3,row,6,'—',bg=bg)
@@ -549,6 +558,13 @@ def build_excel(data):
         ws6.row_dimensions[row].height=18; row+=1
 
         for rep in reps:
+            # Skip reps on leave or departed
+            if rep.get('hasDeparted') or rep.get('isOnLeave'):
+                continue
+            # Also skip if quota is 0 and they have no YTD revenue (M1 new hires excluded via rampStatus)
+            # BUT keep M1 reps — skip only fully-ramped reps with $0 quota (departed/leave)
+            if rep.get('ytdQuota', 0) == 0 and rep.get('rampStatus') == 'Fully Ramped':
+                continue
             projected, fy_proj, fy_quota = build_rep_forecast(rep, current_month)
             # Annualise quota properly
             ramp_row = data.get('ramp',[])
