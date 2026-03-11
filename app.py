@@ -72,23 +72,12 @@ def GAP(ws,r,h=7): ws.row_dimensions[r].height=h
 # ── Forecast engine ───────────────────────────────────────────────────────────
 def build_company_monthly_forecast(summary, pod_stats, current_month=3):
     """
-    Build month-by-month forecast for full year.
-    Jan/Feb: real actuals from podStats.
-    Current month: actuals to date only (no projection from 3 days - too noisy).
-    Future months: seasonality + growth assumptions applied to 2025 base.
+    Growth curve forecast anchored to Feb momentum base.
+    Shape: smooth within-quarter ramp (M1=0.65x, M2=0.82x, M3=1.53x quarterly avg)
+    Growth: 10% NB QoQ, 12% Exp QoQ -- pipeline building + installed base expansion
+    Goalpost: ~$40M total ARR. Bull +12%, Bear -12%.
     """
-    fy25_nb  = summary['pace2025NB']  * 6
-    fy25_exp = summary['pace2025Exp'] * 6
-    sv = sum(SEASON.values())
-
-    fy25_monthly_nb  = {m: fy25_nb  * SEASON[m] / sv for m in range(1,13)}
-    # Blend 2025 base+growth (60%) with YTD-annualised pace (40%) for expansion
-    # Prevents over-indexing on a hot Q1 while respecting the strong start
-    ytd_exp_annualised = summary.get('totalExp', 0) * 6
-    blended_exp_base   = fy25_exp * (1 + EXP_GROWTH_RATE) * 0.60 + ytd_exp_annualised * 0.40
-    fy25_monthly_exp = {m: blended_exp_base * SEASON[m] / sv for m in range(1,13)}
-
-    # Real actuals direct from podStats - no estimation
+    # Real monthly actuals from podStats
     nb_pods  = ['Enterprise', 'Commercial In-House', 'SMB Law']
     exp_pods = [('Enterprise','Enterprise AM'), ('SMB Law','SMB AM')]
 
@@ -98,45 +87,60 @@ def build_company_monthly_forecast(summary, pod_stats, current_month=3):
         3: round(sum(pod_stats.get(p,{}).get('marNB',0) for p in nb_pods)),
     }
     actual_exp = {
-        1: round(sum(pod_stats.get(p,{}).get('janExp',0) + pod_stats.get(a,{}).get('janExp',0) for p,a in exp_pods)),
-        2: round(sum(pod_stats.get(p,{}).get('febExp',0) + pod_stats.get(a,{}).get('febExp',0) for p,a in exp_pods)),
-        3: round(sum(pod_stats.get(p,{}).get('marExp',0) + pod_stats.get(a,{}).get('marExp',0) for p,a in exp_pods)),
+        1: round(sum(pod_stats.get(p,{}).get('janExp',0)+pod_stats.get(a,{}).get('janExp',0) for p,a in exp_pods)),
+        2: round(sum(pod_stats.get(p,{}).get('febExp',0)+pod_stats.get(a,{}).get('febExp',0) for p,a in exp_pods)),
+        3: round(sum(pod_stats.get(p,{}).get('marExp',0)+pod_stats.get(a,{}).get('marExp',0) for p,a in exp_pods)),
     }
 
+    # Use Feb as momentum base (most recent complete month, best signal)
+    # Feb is M2 of quarter (shape index 1 = 0.82x quarterly avg)
+    SHAPE   = [0.65, 0.82, 1.53]   # within-quarter: slow start, strong Q-end
+    QOQ_NB  = 1.10                 # 10% NB growth per quarter
+    QOQ_EXP = 1.12                 # 12% Exp growth per quarter
+
+    feb_nb  = actual_nb.get(2,  summary.get('totalNB',0) * 0.55)
+    feb_exp = actual_exp.get(2, summary.get('totalExp',0) * 0.55)
+
+    # Back-calculate Q1 quarterly avg from Feb actual
+    q1_avg_nb  = feb_nb  / SHAPE[1]
+    q1_avg_exp = feb_exp / SHAPE[1]
+
+    # Project quarterly averages with QoQ growth
+    q_avg_nb  = [q1_avg_nb  * (QOQ_NB  ** q) for q in range(4)]
+    q_avg_exp = [q1_avg_exp * (QOQ_EXP ** q) for q in range(4)]
+
+    # Build monthly forecast
+    model_nb  = {q*3+mi+1: round(q_avg_nb[q]*SHAPE[mi])  for q in range(4) for mi in range(3)}
+    model_exp = {q*3+mi+1: round(q_avg_exp[q]*SHAPE[mi]) for q in range(4) for mi in range(3)}
+
     months = {}
-    for m in range(1,13):
+    for m in range(1, 13):
         is_actual  = m < current_month
         is_partial = m == current_month
 
         if is_actual:
-            # Completed month - use real actuals
             nb  = actual_nb[m]
             exp = actual_exp[m]
         elif is_partial:
-            # Current month - blend run-rate projection (40%) with seasonal model (60%)
-            # Q-end months especially should not be anchored to first few days
-            days_elapsed = datetime.now().day
+            # Blend run-rate (40%) with model (60%) -- Q-end should not be anchored to first few days
+            days_elapsed  = datetime.now().day
             days_in_month = 31 if m in [1,3,5,7,8,10,12] else (28 if m==2 else 30)
             runrate_nb  = round(actual_nb[m]  * days_in_month / max(days_elapsed, 1))
             runrate_exp = round(actual_exp[m] * days_in_month / max(days_elapsed, 1))
-            seasonal_nb  = round(fy25_monthly_nb[m]  * (1 + NB_GROWTH_RATE))
-            seasonal_exp = round(fy25_monthly_exp[m] * (1 + EXP_GROWTH_RATE))
-            nb  = round(runrate_nb  * 0.40 + seasonal_nb  * 0.60)
-            exp = round(runrate_exp * 0.40 + seasonal_exp * 0.60)
+            nb  = round(runrate_nb  * 0.40 + model_nb[m]  * 0.60)
+            exp = round(runrate_exp * 0.40 + model_exp[m] * 0.60)
         else:
-            # Future month - forecast from 2025 base with growth + ramp cohort lift
-            ramp_lift = RAMP_COHORT_LIFT if m >= 7 else 0
-            nb  = round(fy25_monthly_nb[m]  * (1 + NB_GROWTH_RATE  + ramp_lift))
-            exp = round(fy25_monthly_exp[m] * (1 + EXP_GROWTH_RATE + ramp_lift))
+            nb  = model_nb[m]
+            exp = model_exp[m]
 
         months[m] = {
             'nb':       nb,
             'exp':      exp,
             'total':    nb + exp,
-            'nb_bull':  round(nb  * BULL_MULT) if not is_actual else nb,
-            'exp_bull': round(exp * BULL_MULT) if not is_actual else exp,
-            'nb_bear':  round(nb  * BEAR_MULT) if not is_actual else nb,
-            'exp_bear': round(exp * BEAR_MULT) if not is_actual else exp,
+            'nb_bull':  round(nb  * 1.12) if not is_actual else nb,
+            'exp_bull': round(exp * 1.12) if not is_actual else exp,
+            'nb_bear':  round(nb  * 0.88) if not is_actual else nb,
+            'exp_bear': round(exp * 0.88) if not is_actual else exp,
             'is_actual':  is_actual,
             'is_partial': is_partial,
         }
@@ -389,11 +393,11 @@ def build_excel(data):
     for i,h in enumerate(hdrs): HDR(ws4,13,i+1,h)
 
     monthly=build_company_monthly_forecast(summary, podStats, current_month)
-    sv_total = sum(SEASON.values())
-    nb_tgt_monthly_dict  = {m: summary["totalNBTarget"]  * SEASON[m] / sv_total for m in range(1,13)}
-    exp_tgt_monthly_dict = {m: summary["totalExpTarget"] * SEASON[m] / sv_total for m in range(1,13)}
-    nb_tgt_monthly  = summary["totalNBTarget"]  / 12  # kept for compat
-    exp_tgt_monthly = summary["totalExpTarget"] / 12  # kept for compat
+    # Flat monthly targets — annual target / 12. No season weighting on targets.
+    nb_tgt_monthly_dict  = {m: summary["totalNBTarget"]  / 12 for m in range(1,13)}
+    exp_tgt_monthly_dict = {m: summary["totalExpTarget"] / 12 for m in range(1,13)}
+    nb_tgt_monthly  = summary["totalNBTarget"]  / 12
+    exp_tgt_monthly = summary["totalExpTarget"] / 12
 
     fy_totals = {'nb_base':0,'nb_bull':0,'nb_bear':0,'exp_base':0,'exp_bull':0,'exp_bear':0}
     for m in range(1,13):
@@ -506,9 +510,16 @@ def build_excel(data):
                     val = round(runrate_val * 0.40 + seasonal_val * 0.60)
                     cell_bg = 'FFF9C4'
                 else:
-                    # Future month - forecast
-                    ramp_lift = RAMP_COHORT_LIFT if m >= 7 else 0
-                    val = round(fy25_rev * SEASON[m] / sv * (1 + growth + ramp_lift))
+                    # Future month - QoQ growth curve from Feb momentum base
+                    # Same model as company forecast: 10% NB QoQ, 12% Exp QoQ
+                    SHAPE_M = [0.65, 0.82, 1.53]
+                    qoq = 1.10 if not is_exp else 1.12
+                    q = (m - 1) // 3          # 0-indexed quarter
+                    mi = (m - 1) % 3          # position within quarter
+                    feb_val = actuals_m.get(2, 0)
+                    q1_avg  = feb_val / SHAPE_M[1] if feb_val > 0 else (ytd_rev / 2 / SHAPE_M[1])
+                    q_avg   = q1_avg * (qoq ** q)
+                    val     = round(q_avg * SHAPE_M[mi])
                     cell_bg = 'FFFDE7'
                 C(ws5,r,m+1,val,'$#,##0',italic=not is_actual,bg=cell_bg)
                 fy_proj += val
